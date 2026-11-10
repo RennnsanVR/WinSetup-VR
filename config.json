@@ -1,0 +1,10 @@
+{
+    "Debloat-OOSU10": {
+        "OOSU10DownloadLink": "https://dl5.oo-software.com/files/ooshutup10/OOSU10.exe",
+        "OOSU10ConfigFile": "ooshutup10.cfg"
+    },
+    "Debloat-WinUtil": {
+        "WinUtilLink": "https://christitus.com/win",
+        "WinUtilConfig": "winutil-config.json"
+    }
+}
