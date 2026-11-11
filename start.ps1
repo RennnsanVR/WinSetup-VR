@@ -16,10 +16,29 @@
 .NOTES
     Author:  Rennnsan_
     Created: 10/11/2026
-    Requires: RunAsAdministrator
+    Requires: RunAsAdministrator (self-elevates via UAC if needed)
 #>
 
-#Requires -RunAsAdministrator
+# Self-elevate: if not running as Administrator, relaunch this script elevated (UAC prompt) and exit.
+# (Replaces "#Requires -RunAsAdministrator", which would just abort the script instead of elevating.)
+$CurrentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $CurrentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "Administrator rights required. Relaunching elevated..." -ForegroundColor Yellow
+
+    # Relaunch with the same PowerShell host that started us (powershell.exe or pwsh.exe)
+    $HostExe = (Get-Process -Id $PID).Path
+    $ArgList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+
+    try {
+        Start-Process -FilePath $HostExe -ArgumentList $ArgList -WorkingDirectory $PSScriptRoot -Verb RunAs
+    }
+    catch {
+        Write-Host "Elevation was cancelled or failed. WinSetup-VR++ must be run as Administrator." -ForegroundColor Red
+        exit 1
+    }
+    exit
+}
+
 $ErrorActionPreference = "Stop"
 
 $ScriptRoot = $PSScriptRoot
