@@ -1,16 +1,13 @@
 <#
 .SYNOPSIS
-    Runs Windows Update.
+    Updates Windows and its apps.
 
 .DESCRIPTION
-    Update the current install to have everything patched before the debloat script gets run
-
-    The module runs in "passes". Each pass installs all available updates (except drivers).
-    If a restart is required afterwards, the module saves its progress and exits with code 3010
-    (the standard "reboot required" code). start.ps1 picks this up, registers itself to resume
-    at the next logon and restarts the computer. After the restart start.ps1 runs again, this
-    module recognises that the system was restarted and runs another pass. Once no updates are
-    left and no restart is pending, the module cleans up its state and the next module runs.
+    This module runs in passes. The first few passes will involve Windows Update updating the system (except drivers).
+    When a restart is triggered, This module will save its current state and exit with code 3010.
+    When rebooted, start.ps1 starts again through Schedule Task and this module will continue from before.
+    It start a new scan for Windows Updates then begins updating apps from the Microsoft Store and winget packages
+    before continuing to the next module. This is to make sure that the system is fully updated before debloating.
 
 .NOTES
     Author:  Rennnsan_
@@ -18,14 +15,14 @@
     Requires: PSWindowsUpdate
 #>
 
-# Call back setup.ps1
+# Call back start.ps1
 param($Config, $ScriptRoot)
 
 # Safety net so a stuck update / sticky reboot flag can't cause an endless restart loop
 $MaxPasses = 5
 $RebootRequiredExitCode = 3010
 
-$StateDir  = Join-Path $env:ProgramData "WinSetup-VR++"
+$StateDir  = Join-Path $env:ProgramData "WinSetup-VR"
 $StateFile = Join-Path $StateDir "WindowsUpdate.state.json"
 
 function Get-LastBootTime {
@@ -134,5 +131,38 @@ if ($Updates) {
 }
 
 Write-Host "Windows is fully up to date." -ForegroundColor Green
+
+# ---- Microsoft Store apps (same method Topgrade uses) ----
+# Asks the Store's MDM agent to scan for and install app updates. The scan runs in the background.
+Write-Host "Triggering Microsoft Store app updates..." -ForegroundColor Cyan
+try {
+    Get-CimInstance -Namespace "Root\cimv2\mdm\dmmap" -ClassName "MDM_EnterpriseModernAppManagement_AppManagement01" -ErrorAction Stop |
+        Invoke-CimMethod -MethodName UpdateScanMethod -ErrorAction Stop | Out-Null
+    Write-Host "Microsoft Store update scan started (updates install in the background)." -ForegroundColor Green
+}
+catch {
+    Write-Warning "Could not trigger Microsoft Store updates: $($_.Exception.Message)"
+}
+
+# ---- winget packages ----
+$Winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+if ($Winget) {
+    Write-Host "Updating packages with winget..." -ForegroundColor Cyan
+    try {
+        # Refresh sources first so a fresh install doesn't act on stale/empty data
+        & winget.exe source update | Out-Host
+        & winget.exe upgrade --all --silent --include-unknown --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "winget exited with code $LASTEXITCODE (some packages may not have updated)."
+        }
+    }
+    catch {
+        Write-Warning "winget upgrade failed: $($_.Exception.Message)"
+    }
+}
+else {
+    Write-Warning "winget was not found. Skipping winget upgrades."
+}
+
 Clear-UpdateState
 exit 0

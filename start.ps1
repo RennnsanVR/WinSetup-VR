@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    The initiator for WinSetup-VR++
+    The initiator for WinSetup-VR
 
 .DESCRIPTION
-    It is just a wrapper for WinSetup-VR++ to execute from \modules and apply its settings.
+    It is just a wrapper for WinSetup-VR to execute from \modules and apply its settings.
     It also loads config.json to be stored in memory so that the rest of the modules can references the needed configs to be setup.
     This script will require Administrative access in order to function correctly.
 
@@ -19,39 +19,60 @@
     Requires: RunAsAdministrator (self-elevates via UAC if needed)
 #>
 
-# Self-elevate: if not running as Administrator, relaunch this script elevated (UAC prompt) and exit.
-# (Replaces "#Requires -RunAsAdministrator", which would just abort the script instead of elevating.)
+
+# /// ADMIN ELEVATION START ///
+# Check if the current session is running with Administrator rights 
 $CurrentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $CurrentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Administrator rights required. Relaunching elevated..." -ForegroundColor Yellow
+    Write-Host "The current session is not running with Administrator rights. Attempting to elevate with administrator privileges..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 1
 
-    # Relaunch with the same PowerShell host that started us (powershell.exe or pwsh.exe)
+    # Identify the current shell and attempt to run the script with elevated privileges
     $HostExe = (Get-Process -Id $PID).Path
     $ArgList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
-
     try {
         Start-Process -FilePath $HostExe -ArgumentList $ArgList -WorkingDirectory $PSScriptRoot -Verb RunAs
     }
     catch {
-        Write-Host "Elevation was cancelled or failed. WinSetup-VR++ must be run as Administrator." -ForegroundColor Red
+        Write-Host "Elevation was cancelled or failed. WinSetup-VR must be run as Administrator." -ForegroundColor Red
+        Pause
         exit 1
     }
     exit
 }
+# /// ADMIN ELEVATION END ///
+
+
+# /// ASCII ART START ///
+Write-Host "__          ___        _____      _                  __      _______  "
+Write-Host "\ \        / (_)      / ____|    | |                 \ \    / /  __ \ "
+Write-Host " \ \  /\  / / _ _ __ | (___   ___| |_ _   _ _ __ _____\ \  / /| |__) |"
+Write-Host "  \ \/  \/ / | | '_ \ \___ \ / _ \ __| | | | '_ \______\ \/ / |  _  / "
+Write-Host "   \  /\  /  | | | | |____) |  __/ |_| |_| | |_) |      \  /  | | \ \ "
+Write-Host "    \/  \/   |_|_| |_|_____/ \___|\__|\__,_| .__/        \/   |_|  \_\"
+Write-Host "                                           | |                        "
+Write-Host "                                           |_|                        "
+# /// ASCII ART END ///
+
+
+# /// VARIABLES START ///
 
 $ErrorActionPreference = "Stop"
 
 $ScriptRoot = $PSScriptRoot
-$LogFile = Join-Path $ScriptRoot "deploy_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
-Start-Transcript -Path $LogFile
+$LogFile = Join-Path $ScriptRoot "WinSetup-VR_$(Get-Date -Format 'ddMMyyyy_HHmmss').log"
 
 # Restart / resume settings
 $RebootRequiredExitCode = 3010
-$ResumeTaskName = "WinSetup-VR++ Resume"
-$StateDir       = Join-Path $env:ProgramData "WinSetup-VR++"
+$ResumeTaskName = "WinSetup-VR Resume"
+$StateDir       = Join-Path $env:ProgramData "WinSetup-VR"
 $ResumeFile     = Join-Path $StateDir "resume.state.json"
+# /// VARIABLES END ///
 
-function Register-ResumeTask {
+
+# /// FUNCTIONS START ///
+# Add-ResumeTask: Adds an entry to Windows Task Scheduler to resume WinSetup-VR after a restart
+function Add-ResumeTask {
     $ScriptPath = Join-Path $ScriptRoot "start.ps1"
     $Action    = New-ScheduledTaskAction -Execute "powershell.exe" `
                     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`"" `
@@ -65,15 +86,23 @@ function Register-ResumeTask {
         -Principal $Principal -Settings $Settings -Force | Out-Null
 }
 
-function Unregister-ResumeTask {
+function Remove-ResumeTask {
     if (Get-ScheduledTask -TaskName $ResumeTaskName -ErrorAction SilentlyContinue) {
-        Unregister-ScheduledTask -TaskName $ResumeTaskName -Confirm:$false
+        Remove-ScheduledTask -TaskName $ResumeTaskName -Confirm:$false
     }
 }
+# /// FUNCTIONS END ///
 
-Write-Host "=== Starting Automated System Provisioning ===" -ForegroundColor Cyan
 
-# Load central configuration
+# /// LOGGING START ///
+Start-Transcript -Path $LogFile
+# /// LOGGING START ///
+
+
+# /// SCRIPT LOGIC START ///
+Write-Host "=== Starting WinSetup-VR System Provisioning ===" -ForegroundColor Cyan
+
+# Load config.json into memory
 $ConfigPath = Join-Path $ScriptRoot "config.json"
 if (-not (Test-Path $ConfigPath)) {
     Throw "Missing config.json at $ConfigPath"
@@ -104,7 +133,7 @@ foreach ($Module in $Modules) {
 
         if (-not (Test-Path $StateDir)) { New-Item -Path $StateDir -ItemType Directory -Force | Out-Null }
         [PSCustomObject]@{ CompletedModules = $CompletedModules } | ConvertTo-Json | Set-Content -Path $ResumeFile -Encoding UTF8
-        Register-ResumeTask
+        Add-ResumeTask
 
         Write-Host "Restarting in 15 seconds..." -ForegroundColor Magenta
         Stop-Transcript
@@ -117,8 +146,13 @@ foreach ($Module in $Modules) {
 }
 
 # All modules finished - clean up the resume mechanism
-Unregister-ResumeTask
+Remove-ResumeTask
 if (Test-Path $ResumeFile) { Remove-Item -Path $ResumeFile -Force }
 
-Write-Host "`n=== System Provisioning Complete! Reboot recommended. ===" -ForegroundColor Green
+Write-Host "`n=== WinSetup-VR System Provisioning Complete! Reboot recommended. ===" -ForegroundColor Green
+# /// SCRIPT LOGIC END ///
+
+
+# /// LOGGING END ///
 Stop-Transcript
+# /// LOGGING END ///
